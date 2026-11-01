@@ -27,11 +27,14 @@ Navigation:
 
 Read:
   eval <targetId> <js>       Execute JS in tab
+  eval <targetId> --frame <frameId> <js>  Execute JS inside that iframe
+  frames <targetId>          List iframes (frameId, url, crossProcess, index)
   screenshot <targetId> <file>  Capture page screenshot
 
 Interaction:
   click <targetId> <selector>     JS click (simple, fast)
   clickat <targetId> <selector>   CDP trusted mouse click (bypasses isTrusted)
+  clickxy <targetId> <x> <y>      Real mouse click at viewport coords (reaches cross-process iframes)
   type <text>                     Type text into focused element (CDP)
   key <key> [modifier]            Press key (CDP)
   upload <targetId> <selector> <file...>  Upload file(s)
@@ -73,7 +76,8 @@ require_args() {
   fi
 }
 
-# URL-encode a string (portable, no jq needed)
+# URL-encode a string (portable, no jq needed) — used for query params only
+# (target ids / file paths). URLs travel via POST body and must NOT be encoded.
 urlencode() {
   python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
 }
@@ -98,8 +102,9 @@ cmd_targets() {
 cmd_new() {
   require_proxy
   local url="${1:-about:blank}"
-  local enc_url; enc_url="$(urlencode "$url")"
-  curl -s "$PROXY/new?url=$enc_url"
+  # v2.5.3+: URL 走 POST body（不透明字节流），无需 URL-encode，
+  # 也不会因为目标 URL 自带 query 里的 & 被 proxy 切成自己的参数。
+  curl -s -X POST --data-raw "$url" "$PROXY/new"
 }
 
 cmd_close() {
@@ -118,8 +123,22 @@ cmd_navigate() {
   require_proxy
   local target="$1"
   local url="$2"
-  local enc_url; enc_url="$(urlencode "$url")"
-  curl -s "$PROXY/navigate?target=$target&url=$enc_url"
+  # target 走 query（不透明 ID，无特殊字符），URL 走 POST body（原样传输）
+  curl -s -X POST --data-raw "$url" "$PROXY/navigate?target=$target"
+}
+
+cmd_frames() {
+  require_proxy
+  local target="$1"
+  curl -s "$PROXY/frames?target=$target"
+}
+
+cmd_clickxy() {
+  require_proxy
+  local target="$1"
+  local x="$2"
+  local y="$3"
+  curl -s "$PROXY/clickXY?target=$target&x=$x&y=$y"
 }
 
 cmd_back() {
@@ -133,7 +152,18 @@ cmd_eval() {
   local target="$1"
   shift
   local js="$*"
-  curl -s -X POST "$PROXY/eval?target=$target" -d "$js"
+  # 可选 --frame FRAME_ID（取自 /frames），在页面内该 iframe 的隔离环境中执行
+  local frame=""
+  if [ "${1:-}" = "--frame" ] && [ -n "${2:-}" ]; then
+    frame="$2"
+    shift 2
+    js="$*"
+  fi
+  if [ -n "$frame" ]; then
+    curl -s -X POST "$PROXY/eval?target=$target&frame=$frame" -d "$js"
+  else
+    curl -s -X POST "$PROXY/eval?target=$target" -d "$js"
+  fi
 }
 
 cmd_click() {
@@ -282,6 +312,10 @@ case "$CMD" in
     target="$1"; shift
     cmd_eval "$target" "$@"
     ;;
+  frames)
+    require_args 1 "frames <targetId>" "$@"
+    cmd_frames "$1"
+    ;;
   screenshot)
     require_args 2 "screenshot <targetId> <file>" "$@"
     cmd_screenshot "$1" "$2"
@@ -295,6 +329,10 @@ case "$CMD" in
   clickat)
     require_args 2 "clickat <targetId> <selector>" "$@"
     cmd_clickat "$1" "$2"
+    ;;
+  clickxy)
+    require_args 3 "clickxy <targetId> <x> <y>" "$@"
+    cmd_clickxy "$1" "$2" "$3"
     ;;
   scroll)
     require_args 1 "scroll <targetId> [y|direction]" "$@"

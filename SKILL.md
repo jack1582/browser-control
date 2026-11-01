@@ -161,12 +161,40 @@ If the second command fails: Chrome → View → Developer → Allow JavaScript 
 ### CDP Preflight (All Platforms)
 
 ```bash
-bash "${SKILL_DIR}/scripts/check-deps.sh"
+node "${SKILL_DIR}/scripts/check-deps.mjs"
+# (`bash "${SKILL_DIR}/scripts/check-deps.sh"` is a thin wrapper over the same entry point)
 ```
 
-The script checks Node.js 22+, Chrome debug port, and starts the CDP Proxy if needed.
+The script requires Node.js 22+, reuses a healthy running proxy, and only then discovers the browser and starts the proxy in the background. Handle its exit codes:
 
-**Chrome remote debugging setup**: Open `chrome://inspect/#remote-debugging` in Chrome, check "Allow remote debugging for this browser instance", restart Chrome if needed.
+- `0` → ready. Call the proxy API directly; never start or restart the proxy yourself.
+- `2` → no browser configured and no reusable shared service → first-time setup (below).
+- `1` → follow the stdout message. If it contains 「Agent 处理顺序」, follow those steps (e.g. open the browser first, then retry) — self-resolvable cases shouldn't bother the user. “配置错误” only needs the config fixed; never stop or restart the shared service for it.
+
+**Browser = its user-data directory.** `WEB_ACCESS_BROWSER` in `~/.web-access/config.env` holds a data-dir path — the level containing `Local State` (e.g. `~/Library/Application Support/Dia/User Data`). Any Chromium browser works; legacy values `chrome` / `chrome-canary` / `chromium` / `edge` still map to the standard directories per platform. Only that directory's `DevToolsActivePort` is read: no port scanning, no browser switching, hard error when unreachable. `--browser <path>` overrides for one run without writing config.
+
+**Chrome remote debugging setup**: Open `chrome://inspect/#remote-debugging` in Chrome (Edge: `edge://inspect/#remote-debugging`), check "Allow remote debugging for this browser instance", restart the browser if needed.
+
+**First-time setup** (`exit 2`): the script lists only the top-level folder names under the OS application-data root. Recognise the Chromium browser from those names, probe it with `node "${SKILL_DIR}/scripts/browser-probe.mjs" <folder> [...]`, then **ask the user which one to use — even if there is only one** — and write the chosen data dir into `~/.web-access/config.env`.
+
+**User data** (`config.env`, `site-patterns/`) lives in `~/.web-access/`, outside the skill dir, so upgrades never lose it. Legacy in-skill copies are auto-migrated once on first run (a `user-data:` line reports it).
+
+**Maintenance** — the proxy is a shared long-lived service. Never restart it because you changed code, are waiting on a connection, or finished a task. Use the cross-platform command when you genuinely need to:
+
+```bash
+node "${SKILL_DIR}/scripts/proxy-maintenance.mjs" status
+node "${SKILL_DIR}/scripts/proxy-maintenance.mjs" restart
+```
+
+It refuses to stop while requests, commands, managed tabs, or a connection attempt are in flight. Exit codes: `0` ok / `2` busy, identity conflict or migration needed / `3` started but not yet connected (`waitingAuthorization`).
+
+### Risk Notice (show once per session, before site operations)
+
+After preflight passes, show this to the user verbatim before operating on any site:
+
+```
+温馨提示：部分站点对浏览器自动化操作检测严格，存在账号封禁风险。已内置防护措施但无法完全避免，Agent 继续操作即视为接受。
+```
 
 ---
 
@@ -218,12 +246,13 @@ If a foreground (AppleScript) operation fails:
 |------|-----------|------------|
 | Read page text/HTML | AppleScript JS eval | CDP `/eval` |
 | Click links, basic form fill | AppleScript JS click | CDP `/click` |
-| Navigate | AppleScript new tab | CDP `/new` |
+| Navigate | AppleScript new tab | CDP `/new` (POST body) |
 | Upload files | — (escalate to CDP) | CDP `/setFiles` or helper |
 | Rich text editors | — (escalate to CDP) | CDP helper `type` |
 | Sites checking `isTrusted` | — (escalate to CDP) | CDP `/clickAt` |
 | Keyboard shortcuts | — (escalate to CDP) | CDP helper `key` |
 | Hover-triggered menus | — (escalate to CDP) | CDP helper `hover` |
+| Cross-process iframes | Not possible | CDP `/frames` + `/eval?frame=` or `/clickXY` |
 | Parallel multi-target | Not possible | Sub-agent dispatch |
 
 ---
@@ -240,7 +269,8 @@ If a foreground (AppleScript) operation fails:
 1. **CSS selector** via `/click` — simple JS click, fast
 2. **CDP mouse event** via `/clickAt` — trusted, bypasses anti-automation
 3. **JS eval** — for complex targeting logic
-4. **Coordinates** via CDP `Input.dispatchMouseEvent` — when all else fails
+4. **Frame-scoped eval** via `/frames` + `/eval?frame=` — reach into same- or cross-process iframes by DOM
+5. **Viewport coords** via `/clickXY` — required when the target sits in a cross-process iframe; also the last resort when no selector can reach the element
 
 ---
 
@@ -270,19 +300,29 @@ For JXA tab targeting and MutationObserver-based element waiting, see `modules/a
 HTTP-to-CDP bridge proxy for the user's daily Chrome. **Full reference**: `modules/cdp-proxy-api.md`
 
 ```bash
-# Create new background tab
-curl -s "http://localhost:3456/new?url=https://example.com"
+# Create new background tab — URL in POST body, never URL-encoded
+curl -s -X POST --data-raw 'https://example.com' http://localhost:3456/new
 # Execute JS
 curl -s -X POST "http://localhost:3456/eval?target=ID" -d 'document.title'
+# Execute JS inside an iframe (frameId from /frames)
+curl -s -X POST "http://localhost:3456/eval?target=ID&frame=FRAME_ID" -d 'document.body.innerText'
+# List iframes (incl. cross-process, which the parent page cannot read)
+curl -s "http://localhost:3456/frames?target=ID"
 # JS click
 curl -s -X POST "http://localhost:3456/click?target=ID" -d 'button.submit'
+# Real mouse click at viewport coords (reaches cross-process iframes)
+curl -s "http://localhost:3456/clickXY?target=ID&x=120&y=90"
+# Navigate (URL in POST body, target in query)
+curl -s -X POST --data-raw 'https://example.com' "http://localhost:3456/navigate?target=ID"
 # Close tab
 curl -s "http://localhost:3456/close?target=ID"
 # Screenshot
 curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"
 ```
 
-Setup: `bash "${SKILL_DIR}/scripts/check-deps.sh"` — proxy listens on `localhost:3456`.
+Setup: `node "${SKILL_DIR}/scripts/check-deps.mjs"` — proxy listens on `localhost:3456`.
+
+> **v2.5.3 migration**: `GET /new?url=…` and `GET /navigate?target=…&url=…` are gone (they truncated target URLs carrying `&` in their own query, silently dropping e.g. `xsec_token`). All arbitrary-string payloads now travel in the POST body. Any site-experience file still using the old form gets a `400` with guidance — fix the source file in place. See `references/migration-2.5.3.md`.
 
 ---
 
@@ -412,4 +452,4 @@ If a browser action fails:
 | File | When to Load |
 |------|-------------|
 | `references/cdp-api.md` | Need CDP API detail, JS extraction patterns, error handling |
-| `references/site-patterns/{domain}.md` | Before operating on a known site |
+| `references/site-patterns/{domain}.md` | Before operating on a known site (active store is `~/.web-access/site-patterns/`) |

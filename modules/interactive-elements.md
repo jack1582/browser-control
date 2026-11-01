@@ -90,3 +90,19 @@ sleep 0.5 && WINID=$(osascript -e 'tell application "Google Chrome" to id of fro
 # Step 3: Remove annotations
 osascript -e 'tell application "Google Chrome" to execute active tab of front window javascript "var a=document.getElementById(\"__agentAnnotations\");if(a)a.remove();\"done\";"'
 ```
+
+## Background Mode: Elements Inside Cross-Process Iframes
+
+An element index built from the top document does not include cross-process iframe content. Two approaches:
+
+```bash
+# A. Frame-scoped index: build and click entirely inside the frame context
+curl -s -X POST "http://localhost:3456/eval?target=ID&frame=FRAME_ID" -d '<List Interactive Elements script>'
+curl -s -X POST "http://localhost:3456/eval?target=ID&frame=FRAME_ID" -d 'window.__interactiveElements[3].click()'
+
+# B. Viewport coordinates: real trusted mouse click, no tab activation.
+#    /clickXY walks into nested iframes (up to 5 levels) itself and reports what it hit.
+curl -s "http://localhost:3456/clickXY?target=ID&x=120&y=90"
+```
+
+Annotated screenshots are the practical fallback: capture with `/screenshot`, read the coordinates off the image, click with `/clickXY`. Prefer `/clickXY` over JS `.click()` in frames when the site checks `isTrusted` or the frame's handler expects a real pointer event.

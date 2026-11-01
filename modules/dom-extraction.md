@@ -48,3 +48,18 @@ function run() {
     return "Started. Poll window.__foundText after 5-10s.";
 }'
 ```
+
+## Background Mode: Content Behind Cross-Process Iframes
+
+Same-process (same-site) iframes are reachable from the parent page via recursive traversal. Cross-process (cross-site) iframes are **not** — the parent's `document` cannot see into them at all, and no amount of traversal helps. Use the proxy's frame endpoints instead:
+
+```bash
+# 1. Enumerate frames: index, frameId (null = not yet resolved), url, crossProcess
+curl -s "http://localhost:3456/frames?target=ID"
+# 2. Read the frame's DOM in its own execution context
+curl -s -X POST "http://localhost:3456/eval?target=ID&frame=FRAME_ID" -d 'document.body.innerText'
+```
+
+`/frames` is a two-step operation: opaque-origin or not-yet-attached frames come back with `frameId: null` on the first call — call it again after the page settles to resolve them. Nested frames are included; the `depth`/parent relationship is visible from their `url` and the page structure.
+
+For same-site iframes, recursive traversal is still cheaper (one `/eval`, no frame ID lookup).
