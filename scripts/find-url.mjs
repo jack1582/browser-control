@@ -5,12 +5,16 @@
 // 用法：
 //   node find-url.mjs [关键词...] [--only bookmarks|history] [--limit N] [--since 1d|7h|YYYY-MM-DD]
 //
-//   <关键词>             空格分词、多词 AND，匹配 title + url；可省略
+//   <关键词>             空格分词、多词 AND，匹配 title + url；可省略（省略时必须配 --only/--since/--limit 收窄范围）
 //   --only <source>      限定数据源（bookmarks / history），默认两者都查
 //   --browser <id>       限定浏览器（chrome / edge），默认遍历所有已安装的
 //   --limit N            条数上限，默认 20；0 = 不限
 //   --since <window>     时间窗（仅作用于历史）。1d / 7h / 30m 或 YYYY-MM-DD
 //   --sort recent|visits 历史排序：按最近访问 / 按访问次数，默认 recent
+//   --allow-empty-query  允许无关键词直接列出（默认禁止：历史里可能含带 token 的 URL）
+//
+// 隐私：历史记录常含内网地址与带鉴权参数的 URL。默认必须给关键词或 --only 收窄，
+// 避免误调用把大段浏览历史（含凭据）打印进会话上下文。
 //
 // 示例：
 //   node find-url.mjs 财务小智
@@ -27,7 +31,7 @@ import { execFileSync } from 'node:child_process';
 
 // --- 参数解析 -----------------------------------------------------------
 function parseArgs(argv) {
-  const a = { keywords: [], only: null, browser: null, limit: 20, since: null, sort: 'recent' };
+  const a = { keywords: [], only: null, browser: null, limit: 20, since: null, sort: 'recent', allowEmptyQuery: false };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
     if (v === '--only')         a.only    = argv[++i];
@@ -35,6 +39,7 @@ function parseArgs(argv) {
     else if (v === '--limit')   a.limit   = parseInt(argv[++i], 10);
     else if (v === '--since')   a.since   = parseSince(argv[++i]);
     else if (v === '--sort')    a.sort    = argv[++i];
+    else if (v === '--allow-empty-query') a.allowEmptyQuery = true;
     else if (v === '-h' || v === '--help') { printUsage(); process.exit(0); }
     else if (v.startsWith('--')) die(`未知参数: ${v}`);
     else a.keywords.push(v);
@@ -201,6 +206,15 @@ function printHistory(items, showBrowser, showProfile, sortLabel) {
 
 // --- main ---------------------------------------------------------------
 const args = parseArgs(process.argv.slice(2));
+
+// 无关键词且未显式收窄（--only / --since / --allow-empty-query）时拒绝执行：
+// 否则一次误调用就会把最近 20 条真实浏览历史（含 DPoP/JWT、内网 URL）打印进上下文。
+if (!args.keywords.length && !args.only && !args.since && !args.allowEmptyQuery) {
+  console.error('缺少关键词：为避免把含鉴权参数的浏览历史打印出来，请给出关键词，');
+  console.error('或显式用 --only bookmarks|history / --since <窗口> 收窄，确需全量列表时加 --allow-empty-query。');
+  printUsage();
+  process.exit(2);
+}
 
 let browsers = knownBrowserDataDirs().filter(b => fs.existsSync(b.dir));
 if (args.browser) {

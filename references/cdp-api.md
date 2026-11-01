@@ -112,7 +112,7 @@ curl -s "http://localhost:3456/frames?target=ID"
 ```
 
 ### GET /clickXY?target=ID&x=120&y=90
-按页面视口坐标发送真实鼠标事件（移动、按下、松开），不激活标签页（在 headless 下验证；有界面浏览器上未实测）。坐标落在 iframe 的内容区时逐层进入，最多 5 层：
+按页面视口坐标发送真实鼠标事件（移动、按下、松开），不激活标签页（在 headless 下验证；有界面浏览器已实测可用 —— 2026-11-01 在 macOS 有界面 Edge 的后台 tab 上点击 `example.com` 的 "Learn more →"，页面正常跳转到 `iana.org`）。坐标落在 iframe 的内容区时逐层进入，最多 5 层：
 - 跨进程 iframe：换算成该 iframe 视口内的坐标后发给它（扣除 iframe 的边框与内边距，按 transform / zoom 的缩放比例换算）
 - 同进程 iframe：照常由页面派发
 - 坐标落在 iframe 的边框或内边距上：点的是 iframe 元素本身，不进入

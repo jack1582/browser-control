@@ -255,6 +255,8 @@ If a foreground (AppleScript) operation fails:
 | Cross-process iframes | Not possible | CDP `/frames` + `/eval?frame=` or `/clickXY` |
 | Parallel multi-target | Not possible | Sub-agent dispatch |
 
+**Local CLI helpers** (BCS-only, absent upstream): `scripts/browse-cmd.sh <new|navigate|eval|click|frames|clickxy|…>` is a shortcut over the same proxy endpoints; `scripts/cdp-helper.py <key|type|upload|select|hover>` covers the write operations in `modules/cdp-write-ops.md`. Both are optional — every one of them has an equivalent raw `curl` form in `modules/cdp-proxy-api.md`, which is the reference of record.
+
 ---
 
 ## Element Targeting Priority
@@ -337,7 +339,7 @@ Three-layer safety system. **Full reference with injectable scripts**: `modules/
 - Cloud: `console.aws.amazon.com`, `console.cloud.google.com`, `portal.azure.com`
 - Chrome: `chrome://`, `chrome-extension://`, `about:`
 
-**Layer 2 — Element Protection**: Never interact with password fields (`input[type=password]`, `*[name*=password]`, `*[autocomplete=*-password]`). Never click payment buttons (pay, purchase, buy, checkout, place order, subscribe, 付款, 支付, 购买, 下单).
+**Layer 2 — Element Protection**: Never interact with password fields (`input[type=password]`, `*[name*=password]`, `*[autocomplete=*-password]`). Never click payment buttons (pay, purchase, buy, checkout, place order, **confirm payment, submit order**, subscribe, **upgrade, donate**, 付款, 支付, 购买, 下单, **确认订单, 立即购买**). Full keyword list: `modules/safety-system.md`
 
 **Layer 3 — Operation Confirmation**: Confirm with user before: form submissions, submit/send/post/publish/create/delete/remove actions, file uploads to external services, actions on unvisited pages.
 
@@ -452,4 +454,4 @@ If a browser action fails:
 | File | When to Load |
 |------|-------------|
 | `references/cdp-api.md` | Need CDP API detail, JS extraction patterns, error handling |
-| `references/site-patterns/{domain}.md` | Before operating on a known site (active store is `~/.web-access/site-patterns/`) |
+| `~/.web-access/site-patterns/{domain}.md` | Before operating on a known site (the in-skill `references/site-patterns/` is migration source only — never read or write it) |

@@ -10,6 +10,7 @@
 // 未设置浏览器 → exit 2，输出应用数据根目录的最外层文件夹名和首次配置步骤（探测见 browser-probe.mjs）
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -102,6 +103,33 @@ function startProxyDetached(browserOverride) {
 }
 
 // 浏览器身份按数据目录比较：旧值 chrome 与其标准路径视为同一浏览器，兼容升级前已运行的实例。
+// 共享代理是长驻进程，升级 skill 目录不会重载它 —— 正在跑的可能还是旧代码。
+// revision 是 cdp-proxy.mjs + cdp-connection.mjs 的 sha256 前 12 位，和进程启动时读到的文件一致与否可判定是否分叉。
+// 只告警不强制重启：重启会打断同一服务上其他正在进行的任务。
+function localRevision() {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  try {
+    return createHash('sha256')
+      .update(fs.readFileSync(path.join(dir, 'cdp-proxy.mjs')))
+      .update(fs.readFileSync(path.join(dir, 'cdp-connection.mjs')))
+      .digest('hex').slice(0, 12);
+  } catch {
+    return null;
+  }
+}
+
+function warnRevisionDrift(health) {
+  const running = health?.runningRevision;
+  const local = localRevision();
+  if (!running || !local || running === local) return;
+  console.log(`proxy: warn — 共享服务运行的是旧代码（revision ${running}，当前脚本 ${local}）`);
+  console.log('  升级 skill 后需一次性重载代理：node scripts/proxy-maintenance.mjs restart');
+  console.log('  未重启前，新接口（/frames、/clickXY、POST /new 与 /navigate）可能不可用或行为不符文档');
+  if (!health.instanceId) {
+    console.log('  该实例无 instanceId，proxy-maintenance 会拒绝自动维护；需手动停止旧进程后重新运行本检查');
+  }
+}
+
 function matchesBrowser(health, expectedBrowser) {
   if (!expectedBrowser) return true;
   const runningId = health.browser?.id;
@@ -132,9 +160,11 @@ async function ensureProxy(expectedBrowserId, browserOverride, health) {
     if (health.connected === true) {
       const label = health.browser?.label || health.browser?.id || 'unknown';
       console.log(`proxy: ready (${label}) [复用已有实例]`);
+      warnRevisionDrift(health);
       return true;
     }
     console.log('proxy: reconnecting... [复用已有实例]');
+    warnRevisionDrift(health);
   } else {
     console.log('proxy: connecting...');
     startProxyDetached(browserOverride);
@@ -154,6 +184,7 @@ async function ensureProxy(expectedBrowserId, browserOverride, health) {
         if (newHealth.connected === true) {
           const label = newHealth.browser?.label || newHealth.browser?.id || 'unknown';
           console.log(`proxy: ready (${label})`);
+          warnRevisionDrift(newHealth);
           return true;
         }
       }
