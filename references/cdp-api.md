@@ -117,7 +117,7 @@ curl -s "http://localhost:3456/frames?target=ID"
 - 同进程 iframe：照常由页面派发
 - 坐标落在 iframe 的边框或内边距上：点的是 iframe 元素本身，不进入
 
-`x`、`y` 必须是有限的非负数；坐标不在页面视口内时返回 `400`，不发出事件。返回 `{ clicked, x, y }`，进入了 iframe 时另含最内层的 `frameId`、`crossProcess` 与进入层数 `depth`。`clicked` 只表示鼠标事件已经发出，是否点中目标要再用 `/eval` 核对页面状态。
+`x`、`y` 必须是有限的非负数；坐标不在页面视口内时返回 `400`，不发出事件。返回 `{ clicked, x, y }`，进入了 iframe 时另含最内层的 `frameId`、`crossProcess` 与进入层数 `depth`。`clicked` 只表示鼠标事件已经发出，是否点中目标要再用 `/eval` 核对页面状态。坐标必须在**当次**用 `getBoundingClientRect()` 现算，不要复用缓存值 —— 页面变体、字体加载、懒加载都会让元素位置偏移几个像素，而点击照样报 `clicked:true`。
 
 坐标取法：页面上的元素用 `/eval` 取 `getBoundingClientRect()` 的中心；iframe 里的元素，用 `/eval?frame=` 取它在 iframe 视口中的坐标，再加上 iframe 内容区在页面视口中的位置（iframe 元素的 `getBoundingClientRect()` 加 `clientLeft` / `clientTop` 再加内边距；iframe 被缩放时把 iframe 内坐标乘以缩放比例）。
 ```bash
